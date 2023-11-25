@@ -8,7 +8,6 @@ extern crate nb;
 
 use byteorder::{BigEndian, ByteOrder};
 use embedded_hal::serial::{Read, Write};
-use failure::Fail;
 use heapless::Vec;
 
 pub mod responses;
@@ -26,13 +25,13 @@ impl<R: Read<u8>, W: Write<u8>> VescConnection<R, W> {
     }
 
     /// Send a command over a connection, might have a response (Need to improve this)
-    pub fn get_fw_version(&mut self) -> nb::Result<responses::FwVersion, Error> {
+    pub fn get_fw_version(&mut self) -> nb::Result<responses::FwVersion, VescError> {
         write_packet(&[Command::FwVersion.value()], &mut self.w)?;
 
         let payload = read_packet(&mut self.r)?;
 
         if payload[0] != Command::FwVersion.value() {
-            return Err(nb::Error::Other(Error::ParseError));
+            return Err(nb::Error::Other(VescError::ParseError));
         }
 
         let mut uuid = [0u8; 12];
@@ -56,13 +55,13 @@ impl<R: Read<u8>, W: Write<u8>> VescConnection<R, W> {
     }
 
     /// Gets various sensor data from the VESC
-    pub fn get_values(&mut self) -> nb::Result<responses::Values, Error> {
+    pub fn get_values(&mut self) -> nb::Result<responses::Values, VescError> {
         write_packet(&[Command::GetValues.value()], &mut self.w)?;
 
         let payload = read_packet(&mut self.r)?;
 
         if payload[0] != Command::GetValues.value() {
-            return Err(nb::Error::Other(Error::ParseError));
+            return Err(nb::Error::Other(VescError::ParseError));
         }
 
         Ok(responses::Values {
@@ -88,7 +87,7 @@ impl<R: Read<u8>, W: Write<u8>> VescConnection<R, W> {
     }
 
     /// Sets the forward current of the VESC
-    pub fn set_current(&mut self, val: u32) -> nb::Result<(), Error> {
+    pub fn set_current(&mut self, val: u32) -> nb::Result<(), VescError> {
         let mut payload = [0u8; 5];
         payload[0] = Command::SetCurrent.value();
 
@@ -100,7 +99,7 @@ impl<R: Read<u8>, W: Write<u8>> VescConnection<R, W> {
     }
 
     /// Sets the duty cycle in 100ths of a percent
-    pub fn set_duty(&mut self, val: u32) -> nb::Result<(), Error> {
+    pub fn set_duty(&mut self, val: u32) -> nb::Result<(), VescError> {
         let mut payload = [0u8; 5];
         payload[0] = Command::SetDuty.value();
 
@@ -113,7 +112,7 @@ impl<R: Read<u8>, W: Write<u8>> VescConnection<R, W> {
 }
 
 // Constructs a packet from a payload (adds start/stop bytes, length and CRC)
-fn write_packet<W: Write<u8>>(payload: &[u8], w: &mut W) -> nb::Result<(), Error> {
+fn write_packet<W: Write<u8>>(payload: &[u8], w: &mut W) -> nb::Result<(), VescError> {
     let hash = crc(&payload);
 
     // 2 for short packets and 3 for long packets
@@ -139,7 +138,7 @@ fn write_packet<W: Write<u8>>(payload: &[u8], w: &mut W) -> nb::Result<(), Error
 }
 
 // Reads a packet, checks it and returns it's payload
-fn read_packet<R: Read<u8>>(r: &mut R) -> nb::Result<Vec<u8, 128>, Error> {
+fn read_packet<R: Read<u8>>(r: &mut R) -> nb::Result<Vec<u8, 128>, VescError> {
     let mut payload = Vec::new();
 
     // Read correct number of bytes into payload
@@ -154,7 +153,7 @@ fn read_packet<R: Read<u8>>(r: &mut R) -> nb::Result<Vec<u8, 128>, Error> {
                 BigEndian::read_u16(&buf).into()
             }
             _ => {
-                return Err(nb::Error::Other(Error::IoError));
+                return Err(nb::Error::Other(VescError::IoError));
             }
         };
 
@@ -177,13 +176,13 @@ fn read_packet<R: Read<u8>>(r: &mut R) -> nb::Result<Vec<u8, 128>, Error> {
         };
 
         if calculated_hash != read_hash {
-            return Err(nb::Error::Other(Error::ChecksumError));
+            return Err(nb::Error::Other(VescError::ChecksumError));
         }
     }
 
     // Sanity check that the last byte is the stop byte
     if block!(r.read()).ok().unwrap() != 0x03 {
-        return Err(nb::Error::Other(Error::ParseError));
+        return Err(nb::Error::Other(VescError::ParseError));
     }
 
     Ok(payload)
@@ -200,18 +199,16 @@ fn crc(payload: &[u8]) -> [u8; 2] {
 }
 
 /// Errors returned if a command fails
-#[derive(Fail, Debug)]
-pub enum Error {
+#[derive(Debug)]
+pub enum VescError {
     /// Error occured during IO
-    #[fail(display = "Error occured during IO")]
     IoError,
     /// Checksum mismatch
-    #[fail(display = "Checksum mismatch")]
     ChecksumError,
     /// Error occured during parsing
-    #[fail(display = "Error occured during parsing")]
     ParseError,
 }
+
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -310,7 +307,7 @@ impl responses::Fault {
     }
     */
 
-    fn from_u8(n: u8) -> Result<Self, crate::Error> {
+    fn from_u8(n: u8) -> Result<Self, crate::VescError> {
         match n {
             0 => Ok(responses::Fault::None),
             1 => Ok(responses::Fault::OverVoltage),
@@ -319,7 +316,7 @@ impl responses::Fault {
             4 => Ok(responses::Fault::AbsOverCurrent),
             5 => Ok(responses::Fault::OverTempFet),
             6 => Ok(responses::Fault::OverTempMotor),
-            _ => Err(crate::Error::ParseError),
+            _ => Err(crate::VescError::ParseError),
         }
     }
 }
