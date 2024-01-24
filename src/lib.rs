@@ -8,22 +8,19 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub mod responses;
 
 /// Connection to a VESC
-pub struct VescConnection<R, W> {
-    r: R,
-    w: W,
-}
+pub struct VescConnection<T>(T);
 
-impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VescConnection<R, W> {
+impl<T: AsyncRead + Unpin + AsyncWrite> VescConnection<T> {
     /// Open a new connection with a VESC, currenly using embedded-hal Serial `Read` and `Write` traits
-    pub fn new(r: R, w: W) -> Self {
-        VescConnection { r, w }
+    pub fn new(t: T) -> Self {
+        VescConnection(t)
     }
 
     /// Send a command over a connection, might have a response (Need to improve this)
     pub async fn get_fw_version(&mut self) -> Result<responses::FwVersion, VescError> {
-        write_packet(&[Command::FwVersion.value()], &mut self.w).await?;
+        write_packet(&[Command::FwVersion.value()], &mut self.0).await?;
 
-        let payload = read_packet(&mut self.r).await?;
+        let payload = read_packet(&mut self.0).await?;
 
         if payload[0] != Command::FwVersion.value() {
             return Err(VescError::ParseError);
@@ -51,9 +48,9 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VescConnection<R, W> {
 
     /// Gets various sensor data from the VESC
     pub async fn get_values(&mut self) -> Result<responses::Values, VescError> {
-        write_packet(&[Command::GetValues.value()], &mut self.w).await?;
+        write_packet(&[Command::GetValues.value()], &mut self.0).await?;
 
-        let payload = read_packet(&mut self.r).await?;
+        let payload = read_packet(&mut self.0).await?;
 
         if payload[0] != Command::GetValues.value() {
             return Err(VescError::ParseError);
@@ -88,7 +85,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VescConnection<R, W> {
 
         BigEndian::write_u32(&mut payload[1..], val);
 
-        write_packet(&payload, &mut self.w).await?;
+        write_packet(&payload, &mut self.0).await?;
 
         Ok(())
     }
@@ -100,7 +97,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> VescConnection<R, W> {
 
         BigEndian::write_u32(&mut payload[1..], val);
 
-        write_packet(&payload, &mut self.w).await?;
+        write_packet(&payload, &mut self.0).await?;
 
         Ok(())
     }
