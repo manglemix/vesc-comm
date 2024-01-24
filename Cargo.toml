@@ -12,10 +12,9 @@ readme = "README.md"
 
 [dependencies]
 byteorder = { version = "1.4.3", default-features = false }
-nb = "1.0.0"
-embedded-hal = "0.2.7"
-heapless = "0.7.16"
 crc16 = "0.4.0"
+tokio-serial = "5.4.4"
+tokio = { version = "^1.8", features = ["io-util"]}
 
 [dev-dependencies]
 serialport = "4.2.0"
