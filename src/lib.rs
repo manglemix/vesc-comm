@@ -199,6 +199,18 @@ pub enum VescError {
     ParseError,
 }
 
+impl std::fmt::Display for VescError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VescError::IoError => write!(f, "Error occurred during IO"),
+            VescError::ChecksumError => write!(f, "Checksum mismatch"),
+            VescError::ParseError => write!(f, "Error occured during parsing"),
+        }
+    }
+}
+
+impl std::error::Error for VescError {}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 enum Command {
