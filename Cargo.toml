@@ -13,7 +13,6 @@ readme = "README.md"
 [dependencies]
 byteorder = { version = "1.4.3", default-features = false }
 crc16 = "0.4.0"
-tokio-serial = "5.4.4"
 tokio = { version = "^1.8", features = ["io-util"]}
 
 [dev-dependencies]
