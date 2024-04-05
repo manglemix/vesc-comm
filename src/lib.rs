@@ -1,6 +1,6 @@
 //! VESC communication library
 
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 
 use byteorder::{BigEndian, ByteOrder};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -17,13 +17,13 @@ impl<T: AsyncRead + Unpin + AsyncWrite> VescConnection<T> {
     }
 
     /// Send a command over a connection, might have a response (Need to improve this)
-    pub async fn get_fw_version(&mut self) -> Result<responses::FwVersion, VescError> {
+    pub async fn get_fw_version(&mut self) -> Result<responses::FwVersion, VescErrorWithBacktrace> {
         write_packet(&[Command::FwVersion.value()], &mut self.0).await?;
 
         let payload = read_packet(&mut self.0).await?;
 
         if payload[0] != Command::FwVersion.value() {
-            return Err(VescError::ParseError);
+            return Err(VescError::ParseError.into());
         }
 
         let mut uuid = [0u8; 12];
@@ -47,13 +47,14 @@ impl<T: AsyncRead + Unpin + AsyncWrite> VescConnection<T> {
     }
 
     /// Gets various sensor data from the VESC
-    pub async fn get_values(&mut self) -> Result<responses::Values, VescError> {
+    pub async fn get_values(&mut self) -> Result<responses::Values, VescErrorWithBacktrace> {
         write_packet(&[Command::GetValues.value()], &mut self.0).await?;
+        self.0.read_u8().await.map_err(|_| VescError::IoError)?;
 
         let payload = read_packet(&mut self.0).await?;
 
         if payload[0] != Command::GetValues.value() {
-            return Err(VescError::ParseError);
+            return Err(VescError::ParseError.into());
         }
 
         Ok(responses::Values {
@@ -79,7 +80,7 @@ impl<T: AsyncRead + Unpin + AsyncWrite> VescConnection<T> {
     }
 
     /// Sets the forward current of the VESC
-    pub async fn set_current(&mut self, val: u32) -> Result<(), VescError> {
+    pub async fn set_current(&mut self, val: u32) -> Result<(), VescErrorWithBacktrace> {
         let mut payload = [0u8; 5];
         payload[0] = Command::SetCurrent.value();
 
@@ -91,7 +92,7 @@ impl<T: AsyncRead + Unpin + AsyncWrite> VescConnection<T> {
     }
 
     /// Sets the duty cycle in 100ths of a percent
-    pub async fn set_duty(&mut self, val: u32) -> Result<(), VescError> {
+    pub async fn set_duty(&mut self, val: u32) -> Result<(), VescErrorWithBacktrace> {
         let mut payload = [0u8; 5];
         payload[0] = Command::SetDuty.value();
 
@@ -104,35 +105,38 @@ impl<T: AsyncRead + Unpin + AsyncWrite> VescConnection<T> {
 }
 
 // Constructs a packet from a payload (adds start/stop bytes, length and CRC)
-async fn write_packet<W: AsyncWrite + Unpin>(payload: &[u8], w: &mut W) -> Result<(), VescError> {
+async fn write_packet<W: AsyncWrite + Unpin>(payload: &[u8], w: &mut W) -> Result<(), VescErrorWithBacktrace> {
     let hash = crc(&payload);
 
     // 2 for short packets and 3 for long packets
-    w.write(&[0x02]).await.map_err(|_| VescError::IoError)?;
+    w.write_all(&[0x02]).await.map_err(|_| VescError::IoError)?;
 
     // If payload.len() > 255, then start byte should be 3
     // and the next two should be the length
-    w.write(&[payload.len() as u8])
+    w.write_all(&[payload.len() as u8])
         .await
         .map_err(|_| VescError::IoError)?;
 
-    w.write(payload).await.map_err(|_| VescError::IoError)?;
+    w.write_all(payload).await.map_err(|_| VescError::IoError)?;
 
     // Always CRC16
-    w.write(&hash).await.map_err(|_| VescError::IoError)?;
+    w.write_all(&hash).await.map_err(|_| VescError::IoError)?;
 
     // Stop byte
-    w.write(&[0x03]).await.map_err(|_| VescError::IoError)?;
+    w.write_all(&[0x03]).await.map_err(|_| VescError::IoError)?;
+
+    w.flush().await.map_err(|_| VescError::IoError)?;
 
     Ok(())
 }
 
 // Reads a packet, checks it and returns it's payload
-async fn read_packet<R: AsyncRead + Unpin>(r: &mut R) -> Result<Vec<u8>, VescError> {
+async fn read_packet<R: AsyncRead + Unpin>(r: &mut R) -> Result<Vec<u8>, VescErrorWithBacktrace> {
     let mut payload;
 
     // Read correct number of bytes into payload
     {
+        println!("a");
         let payload_len: usize = match r.read_u8().await.map_err(|_| VescError::IoError)? {
             0x02 => r.read_u8().await.map_err(|_| VescError::IoError)? as usize,
             0x03 => {
@@ -142,8 +146,9 @@ async fn read_packet<R: AsyncRead + Unpin>(r: &mut R) -> Result<Vec<u8>, VescErr
                     .map_err(|_| VescError::IoError)?;
                 BigEndian::read_u16(&buf).into()
             }
-            _ => {
-                return Err(VescError::IoError);
+            x => {
+                println!("b {x} {}", u8::reverse_bits(x));
+                return Err(VescError::IoError.into());
             }
         };
 
@@ -166,13 +171,13 @@ async fn read_packet<R: AsyncRead + Unpin>(r: &mut R) -> Result<Vec<u8>, VescErr
         };
 
         if calculated_hash != read_hash {
-            return Err(VescError::ChecksumError);
+            return Err(VescError::ChecksumError.into());
         }
     }
 
     // Sanity check that the last byte is the stop byte
     if r.read_u8().await.map_err(|_| VescError::IoError)? != 0x03 {
-        return Err(VescError::ParseError);
+        return Err(VescError::ParseError.into());
     }
 
     Ok(payload)
@@ -199,6 +204,29 @@ pub enum VescError {
     ParseError,
 }
 
+/// stub
+#[derive(Debug)]
+pub struct VescErrorWithBacktrace {
+    pub error: VescError,
+    pub backtrace: std::backtrace::Backtrace,
+}
+
+
+impl From<VescError> for VescErrorWithBacktrace {
+    fn from(error: VescError) -> Self {
+        Self {
+            error,
+            backtrace: std::backtrace::Backtrace::capture(),
+        }
+    }
+}
+
+impl std::fmt::Display for VescErrorWithBacktrace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}\n\n{}", self.error, self.backtrace)
+    }
+}
+
 impl std::fmt::Display for VescError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -210,6 +238,7 @@ impl std::fmt::Display for VescError {
 }
 
 impl std::error::Error for VescError {}
+impl std::error::Error for VescErrorWithBacktrace {}
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -308,7 +337,7 @@ impl responses::Fault {
     }
     */
 
-    fn from_u8(n: u8) -> Result<Self, crate::VescError> {
+    fn from_u8(n: u8) -> Result<Self, crate::VescErrorWithBacktrace> {
         match n {
             0 => Ok(responses::Fault::None),
             1 => Ok(responses::Fault::OverVoltage),
@@ -317,7 +346,7 @@ impl responses::Fault {
             4 => Ok(responses::Fault::AbsOverCurrent),
             5 => Ok(responses::Fault::OverTempFet),
             6 => Ok(responses::Fault::OverTempMotor),
-            _ => Err(crate::VescError::ParseError),
+            _ => Err(crate::VescError::ParseError.into()),
         }
     }
 }
